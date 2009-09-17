@@ -77,7 +77,6 @@ static testcase_t testcases[] =
 	{ 0x00010101, 0x00232323, 0x00454545, 0x00676767,
 	  0x00898989, 0x00ababab, 0x00cdcdcd, 0x00efefef, },
     },
-#endif
     /* FIXME: make this work on big endian */
     {
 	PIXMAN_yv12,
@@ -105,6 +104,7 @@ static testcase_t testcases[] =
 	    0xffffffff, 0xff000000, 0xff4affff, 0xff0023ee,
 	},
     },
+#endif
 };
 
 int n_test_cases = sizeof(testcases)/sizeof(testcases[0]);

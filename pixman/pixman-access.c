@@ -200,6 +200,53 @@
     ((uint8_t *) ((bits) + offset0 +                                    \
                   ((stride) >> 1) * ((line) >> 1)))
 
+/* R = 1.164(Y - 16) + 1.596(V - 128)
+ * G = 1.164(Y - 16) - 0.813(V - 128) - 0.391(U - 128)
+ * B = 1.164(Y - 16) + 2.018(U - 128)
+ */
+/* 0x8000 is for rounding */
+#define YUV2RGB_CHROMA(r,g,b,u,v)                   \
+    do                                              \
+    {                                               \
+        u -= 128;                                   \
+        v -= 128;                                   \
+        r = 0x8000 + 0x019a2e * v;                  \
+        g = 0x8000 - 0x00d0f2 * v - 0x00647e * u;   \
+        b = 0x8000 + 0x0206a2 * u;                  \
+    } while (0)
+
+#define YUV2RGB_ADD(r,g,b,y)                    \
+    do                                          \
+    {                                           \
+        y = (y - 16) * 0x012b27;                \
+        r += y;                                 \
+        g += y;                                 \
+        b += y;                                 \
+    } while (0)
+
+/* FIXME: ffmpeg uses a table for clamping, is that faster? */
+#define YUV2RGB_STORE_ALPHA(pixel,a,r,g,b)                      \
+    do                                                          \
+    {                                                           \
+        r = (r >= 0 ? r < 0x1000000 ? r : 0xffffff : 0) * a;    \
+        g = (g >= 0 ? g < 0x1000000 ? g : 0xffffff : 0) * a;    \
+        b = (b >= 0 ? b < 0x1000000 ? b : 0xffffff : 0) * a;    \
+                                                                \
+        pixel = 0xff000000 |                                    \
+            ((r >> 8) & 0xff0000) |                             \
+            ((g >> 16) & 0x00ff00) |                            \
+            ((b >> 24) & 0x0000ff);                             \
+    } while (0)
+
+#define YUV2RGB_STORE(pixel,r,g,b)                                      \
+    do                                                                  \
+    {                                                                   \
+        pixel = 0xff000000 |                                            \
+            (r >= 0 ? r < 0x1000000 ? r & 0xff0000 : 0xff0000 : 0) |    \
+            (g >= 0 ? g < 0x1000000 ? (g >> 8) & 0x00ff00 : 0x00ff00 : 0) | \
+            (b >= 0 ? b < 0x1000000 ? (b >> 16) & 0x0000ff : 0x0000ff : 0); \
+    } while (0)
+
 /* Misc. helpers */
 
 static force_inline void
@@ -714,6 +761,37 @@ fetch_scanline_yv12 (pixman_image_t *image,
     }
 }
 
+static void
+fetch_scanline_ayuv (pixman_image_t *image,
+                     int             x,
+                     int             line,
+                     int             width,
+                     uint32_t *      buffer,
+                     const uint32_t *mask)
+{
+    const uint8_t *bits = (const uint8_t *)
+        (image->bits.bits + image->bits.rowstride * line + x);
+
+    int i;
+
+    for (i = 0; i < width; i++)
+    {
+        int32_t a, y, u, v, r, g, b;
+
+        a = READ (image, bits);
+        y = READ (image, bits + 1);
+        u = READ (image, bits + 2);
+        v = READ (image, bits + 3);
+
+        YUV2RGB_CHROMA (r, g, b, u, v);
+        YUV2RGB_ADD (r, g, b, y);
+        YUV2RGB_STORE_ALPHA (*buffer, a, r, g, b);
+
+        buffer++;
+        bits += 4;
+    }
+}
+
 /**************************** Pixel wise fetching *****************************/
 
 /* Despite the type, expects a uint64_t buffer */
@@ -859,6 +937,29 @@ fetch_pixel_yv12 (bits_image_t *image,
 	(b >= 0 ? b < 0x1000000 ? (b >> 16) & 0x0000ff : 0x0000ff : 0);
 }
 
+static uint32_t
+fetch_pixel_ayuv (bits_image_t *image,
+                  int offset,
+                  int line)
+{
+    const uint8_t *bits = (const uint8_t *)
+        (image->bits + image->rowstride * line + offset);
+
+    int32_t a, y, u, v, r, g, b;
+    uint32_t pixel;
+
+    a = READ (image, bits);
+    y = READ (image, bits);
+    u = READ (image, bits);
+    v = READ (image, bits);
+
+    YUV2RGB_CHROMA (r, g, b, u, v);
+    YUV2RGB_ADD (r, g, b, y);
+    YUV2RGB_STORE_ALPHA (pixel, a, r, g, b);
+
+    return pixel;
+}
+
 /*********************************** Store ************************************/
 
 static void
@@ -944,6 +1045,56 @@ store_scanline_x2b10g10r10 (bits_image_t *  image,
 	       ((values[i] >> 38) & 0x3ff) |
 	       ((values[i] >> 12) & 0xffc00) |
 	       ((values[i] << 14) & 0x3ff00000));
+    }
+}
+
+#define UNPREMULTIPLY(r, g, b, a)               \
+    do                                          \
+    {                                           \
+        if (a == 0)                             \
+            r = g = b = 0;                      \
+        else if (a != 255)                      \
+        {                                       \
+            r = (r * 255 + a / 2) / a;          \
+            g = (g * 255 + a / 2) / a;          \
+            b = (b * 255 + a / 2) / a;          \
+        }                                       \
+    } while (0)
+
+/* Y = (0.257 * R) + (0.504 * G) + (0.098 * B) + 16
+ * U = -(0.148 * R) - (0.291 * G) + (0.439 * B) + 128
+ * V = (0.439 * R) - (0.368 * G) - (0.071 * B) + 128
+ */
+
+#define RGB2Y(r,g,b) (0x108000 + 0x41bd * (r) + 0x810f * (g) + 0x1910 * (b))
+#define RGB2U(r,g,b) (0x808000 - 0x25f2 * (r) - 0x4a7e * (g) + 0x7070 * (b))
+#define RGB2V(r,g,b) (0x808000 + 0x7070 * (r) - 0x5e28 * (g) - 0x1249 * (b))
+
+static void
+store_scanline_ayuv (bits_image_t * image,
+                     int x,
+                     int y,
+                     int width,
+                     const uint32_t *values)
+{
+    uint8_t *bits = (uint8_t *) (image->bits + image->rowstride * y + x);
+    int i;
+
+    for (i = 0; i < width; i++)
+    {
+        int32_t a, r, g, b;
+
+        a = values[i] >> 24;
+        r = (values[i] >> 16) & 0xff;
+        g = (values[i] >> 8 ) & 0xff;
+        b = values[i] & 0xff;
+
+        UNPREMULTIPLY (r, g, b, a);
+
+        WRITE (image, bits++, a);
+        WRITE (image, bits++, RGB2Y (r, g, b) >> 16);
+        WRITE (image, bits++, RGB2U (r, g, b) >> 16);
+        WRITE (image, bits++, RGB2V (r, g, b) >> 16);
     }
 }
 
@@ -1166,6 +1317,8 @@ static const format_info_t accessors[] =
       NULL, store_scanline_x2b10g10r10 },
     
 /* YUV formats */
+    FORMAT_INFO (ayuv),
+#if 0
     { PIXMAN_yuy2,
       fetch_scanline_yuy2, fetch_scanline_generic_64,
       fetch_pixel_yuy2, fetch_pixel_generic_64,
@@ -1175,6 +1328,7 @@ static const format_info_t accessors[] =
       fetch_scanline_yv12, fetch_scanline_generic_64,
       fetch_pixel_yv12, fetch_pixel_generic_64,
       NULL, NULL },
+#endif
     
     { PIXMAN_null },
 };

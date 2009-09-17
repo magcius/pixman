@@ -1075,8 +1075,8 @@ pixman_format_supported_source (pixman_format_code_t format)
     case PIXMAN_a1:
     case PIXMAN_g1:
     /* YUV formats */
+    case PIXMAN_ayuv:
     case PIXMAN_yuy2:
-    case PIXMAN_yv12:
 	return TRUE;
 
     default:
@@ -1098,10 +1098,6 @@ pixman_format_supported_source (pixman_format_code_t format)
 PIXMAN_EXPORT pixman_bool_t
 pixman_format_supported_destination (pixman_format_code_t format)
 {
-    /* YUV formats cannot be written to at the moment */
-    if (format == PIXMAN_yuy2 || format == PIXMAN_yv12)
-	return FALSE;
-
     return pixman_format_supported_source (format);
 }
 
