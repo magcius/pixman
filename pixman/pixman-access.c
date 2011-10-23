@@ -699,28 +699,57 @@ fetch_scanline_yuy2 (pixman_image_t *image,
                      const uint32_t *mask)
 {
     const uint32_t *bits = image->bits.bits + image->bits.rowstride * line;
-    int i;
-    
-    for (i = 0; i < width; i++)
+    int i, end;
+    int32_t y, y2, u, v, r, g, b, r2, g2, b2;
+
+    i = x;
+    end = x + width;
+    if (i & 1)
     {
-	int16_t y, u, v;
-	int32_t r, g, b;
-	
-	y = ((uint8_t *) bits)[(x + i) << 1] - 16;
-	u = ((uint8_t *) bits)[(((x + i) << 1) & - 4) + 1] - 128;
-	v = ((uint8_t *) bits)[(((x + i) << 1) & - 4) + 3] - 128;
-	
-	/* R = 1.164(Y - 16) + 1.596(V - 128) */
-	r = 0x012b27 * y + 0x019a2e * v;
-	/* G = 1.164(Y - 16) - 0.813(V - 128) - 0.391(U - 128) */
-	g = 0x012b27 * y - 0x00d0f2 * v - 0x00647e * u;
-	/* B = 1.164(Y - 16) + 2.018(U - 128) */
-	b = 0x012b27 * y + 0x0206a2 * u;
-	
-	*buffer++ = 0xff000000 |
-	    (r >= 0 ? r < 0x1000000 ? r         & 0xff0000 : 0xff0000 : 0) |
-	    (g >= 0 ? g < 0x1000000 ? (g >> 8)  & 0x00ff00 : 0x00ff00 : 0) |
-	    (b >= 0 ? b < 0x1000000 ? (b >> 16) & 0x0000ff : 0x0000ff : 0);
+        /* If we're on an odd pixel, we need to grab the chromas
+         * from the pixel before us. */
+        y = READ (image, bits + (i << 1));
+        u = READ (image, bits + (((i << 1) & ~3) + 1));
+        v = READ (image, bits + (((i << 1) & ~3) + 3));
+
+        YUV2RGB_CHROMA (r, g, b, u, v);
+        YUV2RGB_ADD (r, g, b, y);
+        YUV2RGB_STORE (*buffer, r, g, b);
+
+        buffer ++;
+        i ++;
+    }
+
+    for (; i < end; i += 2)
+    {
+        y  = READ (image, bits + (i << 1));
+        u  = READ (image, bits + ((i << 1) + 1));
+        y2 = READ (image, bits + ((i << 1) + 2));
+        v  = READ (image, bits + ((i << 1) + 3));
+
+        YUV2RGB_CHROMA (r, g, b, u, v);
+
+        r2 = r; g2 = g; b2 = b;
+
+        YUV2RGB_ADD (r, g, b, y);
+        YUV2RGB_STORE (buffer[0], r, g, b);
+        YUV2RGB_ADD (r2, g2, b2, y2);
+        YUV2RGB_STORE (buffer[1], r2, g2, b2);
+
+        buffer += 2;
+    }
+
+    if (end & 1)
+    {
+        i = end;
+
+        y = READ (image, bits + (i << 1));
+        u = READ (image, bits + (((i << 1) & ~3) + 1));
+        v = READ (image, bits + (((i << 1) & ~3) + 3));
+
+        YUV2RGB_CHROMA (r, g, b, u, v);
+        YUV2RGB_ADD (r, g, b, y);
+        YUV2RGB_STORE (*buffer, r, g, b);
     }
 }
 
@@ -887,28 +916,19 @@ fetch_pixel_yuy2 (bits_image_t *image,
 		  int           offset,
 		  int           line)
 {
-    const uint32_t *bits = image->bits + image->rowstride * line;
-    
-    int16_t y, u, v;
-    int32_t r, g, b;
-    
-    y = ((uint8_t *) bits)[offset << 1] - 16;
-    u = ((uint8_t *) bits)[((offset << 1) & - 4) + 1] - 128;
-    v = ((uint8_t *) bits)[((offset << 1) & - 4) + 3] - 128;
-    
-    /* R = 1.164(Y - 16) + 1.596(V - 128) */
-    r = 0x012b27 * y + 0x019a2e * v;
-    
-    /* G = 1.164(Y - 16) - 0.813(V - 128) - 0.391(U - 128) */
-    g = 0x012b27 * y - 0x00d0f2 * v - 0x00647e * u;
-    
-    /* B = 1.164(Y - 16) + 2.018(U - 128) */
-    b = 0x012b27 * y + 0x0206a2 * u;
-    
-    return 0xff000000 |
-	(r >= 0 ? r < 0x1000000 ? r         & 0xff0000 : 0xff0000 : 0) |
-	(g >= 0 ? g < 0x1000000 ? (g >> 8)  & 0x00ff00 : 0x00ff00 : 0) |
-	(b >= 0 ? b < 0x1000000 ? (b >> 16) & 0x0000ff : 0x0000ff : 0);
+    uint32_t *bits = image->bits + line * image->rowstride;
+    int32_t y, u, v, r, g, b;
+    uint32_t pixel;
+
+    y = READ (image, bits + (offset << 1));
+    u = READ (image, bits + ((offset << 1 & ~3) + 1));
+    v = READ (image, bits + ((offset << 1 & ~3) + 3));
+
+    YUV2RGB_CHROMA (r, g, b, u, v);
+    YUV2RGB_ADD (r, g, b, y);
+    YUV2RGB_STORE (pixel, r, g, b);
+
+    return pixel;
 }
 
 static uint32_t
@@ -1318,11 +1338,8 @@ static const format_info_t accessors[] =
     
 /* YUV formats */
     FORMAT_INFO (ayuv),
+    FORMAT_INFO (yuy2),
 #if 0
-    { PIXMAN_yuy2,
-      fetch_scanline_yuy2, fetch_scanline_generic_64,
-      fetch_pixel_yuy2, fetch_pixel_generic_64,
-      NULL, NULL },
     
     { PIXMAN_yv12,
       fetch_scanline_yv12, fetch_scanline_generic_64,
