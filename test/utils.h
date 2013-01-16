@@ -81,31 +81,6 @@ is_little_endian (void)
     return *(unsigned char *)&endian_check_var == 1;
 }
 
-/* perform endian conversion of pixel data
- */
-void
-image_endian_swap (pixman_image_t *img);
-
-/* Allocate memory that is bounded by protected pages,
- * so that out-of-bounds access will cause segfaults
- */
-void *
-fence_malloc (int64_t len);
-
-void
-fence_free (void *data);
-
-/* Generate n_bytes random bytes in fence_malloced memory */
-uint8_t *
-make_random_bytes (int n_bytes);
-
-/* Return current time in seconds */
-double
-gettime (void);
-
-uint32_t
-get_random_seed (void);
-
 /* main body of the fuzzer test */
 int
 fuzzer_test_main (const char *test_name,
@@ -114,29 +89,6 @@ fuzzer_test_main (const char *test_name,
 		  uint32_t    (*test_function)(int testnum, int verbose),
 		  int         argc,
 		  const char *argv[]);
-
-void
-fail_after (int seconds, const char *msg);
-
-/* If possible, enable traps for floating point exceptions */
-void enable_divbyzero_exceptions(void);
-
-/* Converts a8r8g8b8 pixels to pixels that
- *  - are not premultiplied,
- *  - are stored in this order in memory: R, G, B, A, regardless of
- *    the endianness of the computer.
- * It is allowed for @src and @dst to point to the same memory buffer.
- */
-void
-a8r8g8b8_to_rgba_np (uint32_t *dst, uint32_t *src, int n_pixels);
-
-pixman_bool_t
-write_png (pixman_image_t *image, const char *filename);
-
-void
-draw_checkerboard (pixman_image_t *image,
-		   int check_size,
-		   uint32_t color1, uint32_t color2);
 
 /* A pair of macros which can help to detect corruption of
  * floating point registers after a function call. This may
