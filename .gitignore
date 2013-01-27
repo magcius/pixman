@@ -87,3 +87,5 @@ test/window-test
 *.ilk
 *.obj
 *.exe
+
+pixman-region.js
