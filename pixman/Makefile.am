@@ -16,6 +16,6 @@ EXTRA_DIST =				\
 	$(NULL)
 
 pixman-region.js : pixman-region32.o pixman-utils.o
-	$(CC) -O1 -s EXPORT_ALL=1 -s LINKABLE=1 -s RUNTIME_TYPE_INFO=1 -o $@ $^
+	$(CC) -g -O1 -s EXPORT_ALL=1 -s LINKABLE=1 -s RUNTIME_TYPE_INFO=1 -o $@ $^
 
 all-local : pixman-region.js
